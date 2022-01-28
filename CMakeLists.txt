@@ -42,7 +42,8 @@ target_link_libraries(extrinsic_refine ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${Op
 add_executable(global source/global.cpp)
 target_link_libraries(global ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${OpenCV_LIBS})
 
-add_executable(calib_camera source/camera_calib.cpp)
+#add_executable(calib_camera source/camera_calib.cpp)
+add_executable(calib_camera source/mono_camera_calib.cpp)
 target_link_libraries(calib_camera ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES} ${OpenCV_LIBS})
 
 add_executable(tobinary source/tobinary.cpp)
