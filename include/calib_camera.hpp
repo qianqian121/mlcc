@@ -101,7 +101,7 @@ public:
     bool update_enable_;
 
     OctoTree(int layer, int points_size_threshold, float planer_threshold):
-        layer_(layer), points_size_threshold_(points_size_threshold), planer_threshold_(planer_threshold)
+        layer_(layer), points_size_threshold_(max(points_size_threshold, 4)), planer_threshold_(planer_threshold)
     {
         temp_points_.clear();
         octo_state_ = 0;
@@ -202,7 +202,7 @@ public:
             int leafnum = 4 * xyz[0] + 2 * xyz[1] + xyz[2];
             if (leaves_[leafnum] == nullptr)
             {
-                leaves_[leafnum] = new OctoTree(layer_ + 1, 10, planer_threshold_);
+                leaves_[leafnum] = new OctoTree(layer_ + 1, points_size_threshold_, planer_threshold_);
                 leaves_[leafnum]->layer_size_ = layer_size_;
                 leaves_[leafnum]->voxel_center_[0] =
                     voxel_center_[0] + (2 * xyz[0] - 1) * quater_length_;
@@ -290,8 +290,10 @@ public:
     int rgb_edge_minLen_ = 100;
 
     double adaptive_voxel_size_ = 3.0;
+    int adaptive_points_size_threshold_ = 20;
     double eigen_threshold_ = 0.001;
     double down_sample_voxel_size_ = 0.02;
+    double adaptive_edge_distance_threshold_ = 0.009;
 
     Calibration(const std::vector<std::string>& CamCfgPaths, const std::string& CalibCfgFile,
                 bool use_ada_voxel)
@@ -372,6 +374,10 @@ public:
         adaptVoxel(adapt_voxel_map, adaptive_voxel_size_, eigen_threshold_);
         debugVoxel(adapt_voxel_map);
         down_sampling_voxel(*lidar_edge_clouds, down_sample_voxel_size_);
+        sensor_msgs::PointCloud2 dbg_msg;
+        pcl::toROSMsg(*lidar_edge_clouds, dbg_msg);
+        dbg_msg.header.frame_id = "camera_init";
+        pub_surf_contrast.publish(dbg_msg);
 
         ROS_INFO_STREAM("Adaptive voxel sucess!");
         time_t t2 = clock();
@@ -515,6 +521,7 @@ public:
         rgb_canny_threshold_ = fSettings["Canny.gray_threshold"];
         rgb_edge_minLen_ = fSettings["Canny.len_threshold"];
         voxel_size_ = fSettings["Voxel.size"];
+        down_sample_size_ = fSettings["Voxel.down_sample_size"];
         plane_size_threshold_ = fSettings["Plane.min_points_size"];
         plane_max_size_ = fSettings["Plane.max_size"];
         ransac_dis_threshold_ = fSettings["Ransac.dis_threshold"];
@@ -526,8 +533,10 @@ public:
         theta_max_ = cos(DEG2RAD(theta_max_));
 
         adaptive_voxel_size_ = fSettings["Adaptive.voxel_size"];
+        adaptive_points_size_threshold_ = fSettings["Adaptive.points_size_threshold"];
         eigen_threshold_ = fSettings["Adaptive.eigen_threshold"];
         down_sample_voxel_size_ = fSettings["Adaptive.down_sample_voxel_size"];
+        adaptive_edge_distance_threshold_ = fSettings["Adaptive.edge_distance_threshold"];
         return true;
     }
 
@@ -574,9 +583,9 @@ public:
         }
         ++cloudCount;
         // maxinum msg num 1000
-        // if (cloudCount > 1000) {
-        //   break;
-        // }
+         if (cloudCount >= 1) {
+           break;
+         }
       }
       std::vector<int> indices;
       pcl::removeNaNFromPointCloud(*origin_cloud, *origin_cloud, indices);
@@ -663,7 +672,7 @@ public:
                     voxel_map[position]->temp_points_.push_back(pt);
                 else
                 {
-                    OctoTree *octo_tree = new OctoTree(0, 20, eigen_threshold);
+                    OctoTree *octo_tree = new OctoTree(0, adaptive_points_size_threshold_, eigen_threshold);
                     voxel_map[position] = octo_tree;
                     voxel_map[position]->quater_length_ = voxel_size / 4;
                     voxel_map[position]->voxel_center_[0] = (0.5 + position.x) * voxel_size;
@@ -678,7 +687,7 @@ public:
         }
         for (auto iter = voxel_map.begin(); iter != voxel_map.end(); ++iter)
         {
-            down_sampling_voxel((iter->second->temp_points_), 0.02);
+            down_sampling_voxel((iter->second->temp_points_), down_sample_size_);
             iter->second->init_octo_tree();
         }
     }
@@ -724,9 +733,11 @@ public:
                     pcl::toROSMsg(color_cloud, dbg_msg);
                     dbg_msg.header.frame_id = "camera_init";
                     pub_surf.publish(dbg_msg);
+                  std::cout << "merge plane points size:" << dbg_msg.data.size() << std::endl;
+                  std::cout << "merge plane points size:" << color_cloud.points.size() << std::endl;
                     loop.sleep();
                 }
-                // std::cout << "merge plane size:" << merge_plane_list.size() << std::endl;
+                 std::cout << "merge plane size:" << merge_plane_list.size() << std::endl;
                 Eigen::Vector3d voxel_origin;
                 voxel_origin[0] = iter->second->voxel_center_[0] - 2 * iter->second->quater_length_;
                 voxel_origin[1] = iter->second->voxel_center_[1] - 2 * iter->second->quater_length_;
@@ -771,16 +782,17 @@ public:
                             std::vector<float> pointNKNSquaredDistance(K);
                             if (kd_tree.nearestKSearch(p, K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0)
                                 if (pointNKNSquaredDistance[0] < 0.009)
+                                if (pointNKNSquaredDistance[0] < adaptive_edge_distance_threshold_)
                                 {
                                     line_cloud.points.push_back(p);
                                     lidar_edge_clouds->points.push_back(p);
                                 }
                         }
-                        sensor_msgs::PointCloud2 dbg_msg;
-                        pcl::toROSMsg(line_cloud, dbg_msg);
-                        dbg_msg.header.frame_id = "camera_init";
-                        pub_surf_contrast.publish(dbg_msg);
-                        loop.sleep();
+//                        sensor_msgs::PointCloud2 dbg_msg;
+//                        pcl::toROSMsg(line_cloud, dbg_msg);
+//                        dbg_msg.header.frame_id = "camera_init";
+//                        pub_surf_contrast.publish(dbg_msg);
+//                        loop.sleep();
                     }
                 }
             }

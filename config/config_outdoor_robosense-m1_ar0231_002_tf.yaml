@@ -13,9 +13,12 @@ ExtLiDARNumber3: 2 # right LiDAR of MID-100
 LiDARFilesPath: "/mnt/project/ros/mlcc/catkin_ws/src/mlcc/config/"
 ExtrinsicNumber: 0 # total number of extrinsics to be calibrated
 
-Adaptive.voxel_size: 3
-Adaptive.eigen_threshold: 0.001
-Adaptive.down_sample_voxel_size: 0.02
+Adaptive.voxel_size: 4
+Adaptive.points_size_threshold: 16
+Adaptive.eigen_threshold: 0.0002
+#Adaptive.eigen_threshold: 0.16
+Adaptive.down_sample_voxel_size: 0.05
+Adaptive.edge_distance_threshold: 0.009
 
 # Params for Canny Edge Extraction
 Canny.gray_threshold: 10
@@ -24,15 +27,15 @@ Canny.len_threshold: 200
 # Params for Voxel Cutting & Plane Fitting & Edge Extraction
 Voxel.size: 1
 Voxel.down_sample_size: 0.02
-Plane.min_points_size: 60
-Plane.normal_theta_min: 60
-Plane.normal_theta_max: 120
-Plane.max_size: 4
-Ransac.dis_threshold: 0.03
+Plane.min_points_size: 15
+Plane.normal_theta_min: 30
+Plane.normal_theta_max: 145
+Plane.max_size: 5
+Ransac.dis_threshold: 0.02
 Ransac.iter_num: 200
-Edge.min_dis_threshold: 0.05
-Edge.max_dis_threshold: 0.08
+Edge.min_dis_threshold: 0.03
+Edge.max_dis_threshold: 0.06
 
 # Params for color point clouds
-Color.dense: 10
-Color.intensity_threshold: 10
+Color.dense: 0.1
+Color.intensity_threshold: 5
