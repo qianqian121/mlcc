@@ -23,6 +23,8 @@
 #include <pcl/segmentation/sac_segmentation.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <ros/ros.h>
+#include <rosbag/bag.h>
+#include <rosbag/view.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sstream>
 #include <std_msgs/Header.h>
@@ -30,6 +32,8 @@
 #include <string>
 #include <time.h>
 #include <unordered_map>
+
+#include "rslidar_point.h"
 
 #define max_layer 4
 
@@ -265,6 +269,9 @@ public:
     pcl::PointCloud<pcl::PointXYZI>::Ptr lidar_edge_clouds; // 存储平面交接点云 global frame
     std::vector<int> lidar_edge_numbers;
 
+    std::string lidar_topic_name_ = "";
+    std::string image_topic_name_ = "";
+
     float voxel_size_;
     float down_sample_size_;
     float ransac_dis_threshold_;
@@ -281,6 +288,10 @@ public:
     int plane_max_size_ = 5;
     int rgb_canny_threshold_ = 20;
     int rgb_edge_minLen_ = 100;
+
+    double adaptive_voxel_size_ = 3.0;
+    double eigen_threshold_ = 0.001;
+    double down_sample_voxel_size_ = 0.02;
 
     Calibration(const std::vector<std::string>& CamCfgPaths, const std::string& CalibCfgFile,
                 bool use_ada_voxel)
@@ -345,6 +356,61 @@ public:
         ROS_INFO_STREAM("Initialization complete");
     }
 
+    Calibration(const std::string &bag_path, const std::vector<std::string>& CamCfgPaths, const std::string& CalibCfgFile,
+              bool use_ada_voxel) {
+      loadCameraConfig(cams, CamCfgPaths);
+      loadCalibConfig(CalibCfgFile);
+      std::cout << "sucessfully load calib config" << std::endl;
+      base_clouds.resize(1);
+      cams[0].rgb_imgs.resize(1);
+      loadImgAndPointcloud(bag_path, base_clouds[0], cams[0].rgb_imgs[0]);
+
+      std::unordered_map<VOXEL_LOC, OctoTree *> adapt_voxel_map;
+      time_t t1 = clock();
+      if (use_ada_voxel)
+      {
+        adaptVoxel(adapt_voxel_map, adaptive_voxel_size_, eigen_threshold_);
+        debugVoxel(adapt_voxel_map);
+        down_sampling_voxel(*lidar_edge_clouds, down_sample_voxel_size_);
+
+        ROS_INFO_STREAM("Adaptive voxel sucess!");
+        time_t t2 = clock();
+        std::cout << "adaptive time:" << (double)(t2 - t1) / (CLOCKS_PER_SEC) << "s" << std::endl;
+      }
+      else
+      {
+        std::unordered_map<VOXEL_LOC, Voxel*> voxel_map;
+        initVoxel(voxel_size_, voxel_map);
+        ROS_INFO_STREAM("Init voxel sucess!");
+        LiDAREdgeExtraction(voxel_map, ransac_dis_threshold_,
+                            plane_size_threshold_, lidar_edge_clouds);
+        time_t t3 = clock();
+        std::cout << "voxel time:" << (double)(t3 - t1) / (CLOCKS_PER_SEC) << std::endl;
+      }
+      std::cout << "lidar edge size:" << lidar_edge_clouds->size() << std::endl;
+
+      for (size_t i = 0; i < cams.size(); i++)
+        for (size_t j = 0; j < cams[i].rgb_imgs.size(); j++)
+          if (!cams[i].rgb_imgs[j].data)
+          {
+            std::string msg = "Can not load image from " + lidar_path;
+            ROS_ERROR_STREAM(msg.c_str());
+            exit(-1);
+          }
+      ROS_INFO_STREAM("Load all data!");
+
+      for (size_t i = 0; i < cams.size(); i++)
+      {
+        std::vector<cv::Mat> grey_imgs, rgb_edge_imgs;
+        grey_imgs.resize(base_poses.size());
+        for (size_t j = 0; j < cams[i].rgb_imgs.size(); j++)
+          cv::cvtColor(cams[i].rgb_imgs[j], grey_imgs[j], cv::COLOR_BGR2GRAY);
+        edgeDetector(rgb_canny_threshold_, rgb_edge_minLen_, grey_imgs,
+                     rgb_edge_imgs, cams[i].rgb_edge_clouds);
+      }
+      ROS_INFO_STREAM("Initialization complete");
+    }
+
     bool loadCameraConfig(std::vector<Camera>& cams, const std::vector<std::string>& CamCfgPaths)
     {
         cams.resize(CamCfgPaths.size());
@@ -406,15 +472,21 @@ public:
             std::cerr << "Failed to open settings file at: " << config_file << std::endl;
             exit(-1);
         }
+
+        fSettings["PointCloudTopic"] >> lidar_topic_name_;
+        fSettings["ImageTopic"] >> image_topic_name_;
+
         fSettings["LiDARFilesPath"] >> lidar_path;
         fSettings["ExtrinsicNumber"] >> total_ext_number;
         fSettings["BaseLiDARNumber"] >> base_number;
         std::cout << "total ext_number:" << total_ext_number << std::endl;
-        ext_lidars.resize(total_ext_number);
-        fSettings["ExtLiDARNumber1"] >> ext_lidars[0].lidar_number;
-        fSettings["ExtLiDARNumber2"] >> ext_lidars[1].lidar_number;
-        if (total_ext_number > 2)
+        if (total_ext_number > 0) {
+          ext_lidars.resize(total_ext_number);
+          fSettings["ExtLiDARNumber1"] >> ext_lidars[0].lidar_number;
+          fSettings["ExtLiDARNumber2"] >> ext_lidars[1].lidar_number;
+          if (total_ext_number > 2)
             fSettings["ExtLiDARNumber3"] >> ext_lidars[2].lidar_number;
+        }
 
         std::fstream file;
         std::string lidar_pose_file, extrinsics_file;
@@ -452,7 +524,81 @@ public:
         theta_max_ = fSettings["Plane.normal_theta_max"];
         theta_min_ = cos(DEG2RAD(theta_min_));
         theta_max_ = cos(DEG2RAD(theta_max_));
+
+        adaptive_voxel_size_ = fSettings["Adaptive.voxel_size"];
+        eigen_threshold_ = fSettings["Adaptive.eigen_threshold"];
+        down_sample_voxel_size_ = fSettings["Adaptive.down_sample_voxel_size"];
         return true;
+    }
+
+    void loadImgAndPointcloud(const std::string path,
+                            pcl::PointCloud<pcl::PointXYZI>::Ptr &origin_cloud,
+                            cv::Mat &rgb_img) {
+      origin_cloud =
+          pcl::PointCloud<pcl::PointXYZI>::Ptr(new pcl::PointCloud<pcl::PointXYZI>);
+      std::fstream file_;
+      file_.open(path, ios::in);
+      if (!file_) {
+        cout << "File " << path << " does not exit" << endl;
+        return;
+      }
+      ROS_INFO("Loading the rosbag %s", path.c_str());
+      rosbag::Bag bag;
+      try {
+        bag.open(path, rosbag::bagmode::Read);
+      } catch (rosbag::BagException e) {
+        ROS_ERROR_STREAM("LOADING BAG FAILED: " << e.what());
+        return;
+      }
+
+      std::vector<string> lidar_topic;
+      lidar_topic.push_back(lidar_topic_name_);
+      rosbag::View view(bag, rosbag::TopicQuery(lidar_topic));
+
+      int cloudCount = 0;
+      for (const rosbag::MessageInstance &m : view) {
+
+        sensor_msgs::PointCloud2 rslidar_cloud;
+        rslidar_cloud =
+            *(m.instantiate<sensor_msgs::PointCloud2>()); // message type
+        pcl::PointCloud<RslidarPoint> cloud;
+        fromROSMsg(rslidar_cloud, cloud);
+        for (uint i = 0; i < cloud.size(); ++i) {
+          if (cloud.points[i].intensity == 0) continue;
+          pcl::PointXYZI p;
+          p.x = cloud.points[i].x;
+          p.y = cloud.points[i].y;
+          p.z = cloud.points[i].z;
+          p.intensity = static_cast<float>(cloud.points[i].intensity);
+          origin_cloud->points.push_back(p);
+        }
+        ++cloudCount;
+        // maxinum msg num 1000
+        // if (cloudCount > 1000) {
+        //   break;
+        // }
+      }
+      std::vector<int> indices;
+      pcl::removeNaNFromPointCloud(*origin_cloud, *origin_cloud, indices);
+//      for (int i = 0; i < origin_cloud->size(); ++i) {
+//        std::cout << origin_cloud->points[i] << std::endl;
+//      }
+
+      std::vector<string> img_topic;
+      img_topic.push_back(image_topic_name_);
+      rosbag::View img_view(bag, rosbag::TopicQuery(img_topic));
+      int cnt = 0;
+      for (const rosbag::MessageInstance &m : img_view) {
+        cnt++;
+        if (cnt == 1) {
+          sensor_msgs::Image image;
+          image = *(m.instantiate<sensor_msgs::Image>()); // message type
+          cv_bridge::CvImagePtr img_ptr =
+              cv_bridge::toCvCopy(image, sensor_msgs::image_encodings::BGR8);
+          img_ptr->image.copyTo(rgb_img);
+        }
+      }
+      ROS_INFO("Sucessfully load Point Cloud and Image");
     }
 
     void loadImgAndPointcloud()
@@ -503,6 +649,8 @@ public:
                 pt = base_poses[a].q * pt + base_poses[a].t;
                 pcl::PointXYZI p_c;
                 p_c.x = pt(0); p_c.y = pt(1); p_c.z = pt(2);
+//                std::cout << p_t << std::endl;
+//                std::cout << p_c << std::endl;
                 float loc_xyz[3];
                 for (int j = 0; j < 3; j++)
                 {

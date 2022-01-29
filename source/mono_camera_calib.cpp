@@ -194,23 +194,23 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "calib_camera");
     ros::NodeHandle nh;
+    ros::Rate loop_rate(0.1);
 
     int dis_thr_low_bound;
     bool use_ada_voxel;
     nh.getParam("dis_thr_low_bound", dis_thr_low_bound);
     nh.getParam("use_ada_voxel", use_ada_voxel);
 
-    const string LeftCamCfgPath = string(argv[1]);
-    const string RightCamCfgPath = string(argv[2]);
-    const string CalibSettingPath = string(argv[3]);
-    const string ResultPath = string(argv[4]);
+    const string CamCfgPath = string(argv[1]);
+    const string CalibSettingPath = string(argv[2]);
+    const string ResultPath = string(argv[3]);
+    const string bag_path = string(argv[4]);
 
     /* load calibration configurations */
     vector<string> CamCfgPaths;
-    CamCfgPaths.emplace_back(LeftCamCfgPath);
-    CamCfgPaths.emplace_back(RightCamCfgPath);
-    Calibration calib(CamCfgPaths, CalibSettingPath, use_ada_voxel);
-    // roughCalib(calib, DEG2RAD(0.1), 30);
+    CamCfgPaths.emplace_back(CamCfgPath);
+    Calibration calib(bag_path, CamCfgPaths, CalibSettingPath, use_ada_voxel);
+//     roughCalib(calib, DEG2RAD(0.1), 30);
 
     /* calibration process */
     int iter = 0;
@@ -301,22 +301,6 @@ int main(int argc, char **argv)
         outfile.close();
     }
 
-    /* ground truth calculated from the chessboard method */
-    Eigen::Matrix3d Rgt;
-    Rgt << 0.999824645293243, -0.0183851254185105, 0.00355890820136192,
-           0.0183851559551168, 0.999830978444791, 2.41378898009210e-05,
-           -0.00355875044729421, 4.12974252036677e-05, 0.999993666774833;
-    Matrix3d R_;
-    R_ = Rgt.inverse() * (calib.cams[1].ext_R * calib.cams[0].ext_R.inverse());
-    Vector3d t_e = R_.eulerAngles(0, 1, 2);
-    cout << "Euler " << t_e.transpose() * 57.3 << endl;
-    Eigen::Quaterniond q2(Rgt.transpose());
-    Eigen::Quaterniond qme(calib.cams[1].ext_R * calib.cams[0].ext_R.inverse());
-    cout << qme.toRotationMatrix() << endl;
-    cout << "angular error " << qme.angularDistance(q2) * 57.3 << " degree" << endl;
-    cout << "baseline error "
-         << fabs(calib.cams[0].ext_t(0) - (qme * calib.cams[1].ext_t)(0) - 0.1072) << " m" << endl;
-
     /* visualize the colorized point cloud */
     Eigen::Vector3d euler_angle = calib.cams[0].ext_R.eulerAngles(2, 1, 0);
     Eigen::Vector3d transation = calib.cams[0].ext_t;
@@ -325,16 +309,20 @@ int main(int argc, char **argv)
                     transation(0), transation(1), transation(2);
     calib.colorCloud(calib_params, 5, calib.cams[0], calib.cams[0].rgb_imgs, calib.base_clouds);
 
+    std::cout << "publishing rbg cloud and projected image...";
     while (ros::ok())
     {
-        cout << "please reset rviz and push enter to publish again" << endl;
-        getchar();
         Eigen::Vector3d euler_angle = calib.cams[0].ext_R.eulerAngles(2, 1, 0);
         Eigen::Vector3d transation = calib.cams[0].ext_t;
         Vector6d calib_params;
         calib_params << euler_angle(0), euler_angle(1), euler_angle(2),
                         transation(0), transation(1), transation(2);
         calib.colorCloud(calib_params, 5, calib.cams[0], calib.cams[0].rgb_imgs, calib.base_clouds);
+//        loop_rate.sleep();
+        cv::Mat projection_img = calib.getProjectionImg(calib_params, 0, 0);
+        std::string img_name = "0_projection";
+        cv::imshow(img_name, projection_img);
+        cv::waitKey(10);
     }
     return 0;
 }

@@ -1,21 +1,21 @@
 %YAML:1.0
 
+# Topic name in rosbag
+PointCloudTopic: "/rslidar_points"
+ImageTopic: "/usb_cam/image_raw"
+
+# Unused for mono camera config
 BaseLiDARNumber: 3 # AVIA
 ExtLiDARNumber1: 0 # left LiDAR of MID-100
 ExtLiDARNumber2: 1 # middle LiDAR of MID-100
 ExtLiDARNumber3: 2 # right LiDAR of MID-100
-LiDARFilesPath: "/home/sam/catkin_ws/src/mlcc/scene2/"
-ExtrinsicNumber: 3 # total number of extrinsics to be calibrated
 
-# Initial extrinsic (usually provided by hand measurement or cad design)
-ExtrinsicMat: !!opencv-matrix
-  rows: 4
-  cols: 4
-  dt: d
-  data: [0.0,   -1.0,   0.0,    0.0,
-         0.0,  0.0,  -1.0,    0.0,
-         1.0,   0.0,    0.0,    0.0,
-         0.0,   0.0,    0.0,    1.0]
+LiDARFilesPath: "/mnt/project/ros/mlcc/catkin_ws/src/mlcc/config/"
+ExtrinsicNumber: 0 # total number of extrinsics to be calibrated
+
+Adaptive.voxel_size: 3
+Adaptive.eigen_threshold: 0.001
+Adaptive.down_sample_voxel_size: 0.02
 
 # Params for Canny Edge Extraction
 Canny.gray_threshold: 10
