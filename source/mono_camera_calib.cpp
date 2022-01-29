@@ -5,7 +5,7 @@
 #include <iomanip>
 #include <iostream>
 
-// #define debug_mode
+#define debug_mode  1
 
 using namespace std;
 using namespace Eigen;
@@ -194,7 +194,7 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "calib_camera");
     ros::NodeHandle nh;
-    ros::Rate loop_rate(0.1);
+    ros::Rate loop_rate(10);
 
     int dis_thr_low_bound;
     bool use_ada_voxel;
@@ -301,28 +301,27 @@ int main(int argc, char **argv)
         outfile.close();
     }
 
-    /* visualize the colorized point cloud */
-    Eigen::Vector3d euler_angle = calib.cams[0].ext_R.eulerAngles(2, 1, 0);
-    Eigen::Vector3d transation = calib.cams[0].ext_t;
-    Vector6d calib_params;
-    calib_params << euler_angle(0), euler_angle(1), euler_angle(2),
-                    transation(0), transation(1), transation(2);
-    calib.colorCloud(calib_params, 5, calib.cams[0], calib.cams[0].rgb_imgs, calib.base_clouds);
-
-    std::cout << "publishing rbg cloud and projected image...";
+    std::cout << "publishing rbg cloud and projected image..." << std::flush;
+    int print_cnt = 0;
     while (ros::ok())
     {
+        /* visualize the colorized point cloud */
         Eigen::Vector3d euler_angle = calib.cams[0].ext_R.eulerAngles(2, 1, 0);
         Eigen::Vector3d transation = calib.cams[0].ext_t;
         Vector6d calib_params;
         calib_params << euler_angle(0), euler_angle(1), euler_angle(2),
                         transation(0), transation(1), transation(2);
         calib.colorCloud(calib_params, 5, calib.cams[0], calib.cams[0].rgb_imgs, calib.base_clouds);
-//        loop_rate.sleep();
+
         cv::Mat projection_img = calib.getProjectionImg(calib_params, 0, 0);
         std::string img_name = "0_projection";
         cv::imshow(img_name, projection_img);
         cv::waitKey(10);
+        if (print_cnt++ % 100 == 0) {
+          std::cout << "." << std::flush;
+        }
+
+        loop_rate.sleep();
     }
     return 0;
 }

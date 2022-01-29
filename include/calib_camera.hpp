@@ -723,7 +723,7 @@ public:
                     sensor_msgs::PointCloud2 dbg_msg;
                     pcl::toROSMsg(color_cloud, dbg_msg);
                     dbg_msg.header.frame_id = "camera_init";
-                    pub_dbg.publish(dbg_msg);
+                    pub_surf.publish(dbg_msg);
                     loop.sleep();
                 }
                 // std::cout << "merge plane size:" << merge_plane_list.size() << std::endl;
@@ -1563,7 +1563,7 @@ public:
                 }
             }
             if (show_residual)
-                if (a == 16)
+//                if (a == 16)
                 {
                     cv::Mat residual_img = getConnectImg(
                         cam, dis_threshold, cam_edge_clouds_2d[a], line_edge_cloud_2d);
@@ -1810,7 +1810,7 @@ public:
                     pt1 = base_poses[b].q * pt1 + base_poses[b].t;
                     pt1 = base_poses[a].q.inverse() * (pt1 - base_poses[a].t);
                     Eigen::Vector3d pt2(0, 0, 1);
-                    if (cos_angle(q_ * pt1 + t_, pt2) > 0.8) // FoV check
+//                    if (cos_angle(q_ * pt1 + t_, pt2) > 0.8) // FoV check
                     {
                         float depth = sqrt(pow(point.x, 2) + pow(point.y, 2) + pow(point.z, 2));
                         if (depth > 2.5 && depth < 50)
@@ -1924,14 +1924,14 @@ public:
         Eigen::Quaterniond q_(rotation_vector3);
         Eigen::Vector3d t_(extrinsic_params[3], extrinsic_params[4], extrinsic_params[5]);
         int cnt = 0;
-        lidar_cloud->points.resize(5e6);
+        lidar_cloud->points.resize(lidar_cloud_->points.size());
         for (size_t i = 0; i < lidar_cloud_->points.size(); i++)
         {
             pcl::PointXYZI point_3d = lidar_cloud_->points[i];
             Eigen::Vector3d pt1(point_3d.x, point_3d.y, point_3d.z);
             Eigen::Vector3d pt2(0, 0, 1);
             pt1 = base_poses[image_number].q.inverse() * (pt1 - base_poses[image_number].t);
-            if (cos_angle(q_ * pt1 + t_, pt2) > 0.8)
+//            if (cos_angle(q_ * pt1 + t_, pt2) > 0.8)
             {
                 lidar_cloud->points[cnt].x = pt1(0);
                 lidar_cloud->points[cnt].y = pt1(1);
@@ -1940,9 +1940,10 @@ public:
                 cnt++;
             }
         }
-        std::cout << "lidar cloud size:" << lidar_cloud->size() << std::endl;
+//        std::cout << "lidar cloud size:" << lidar_cloud->size() << std::endl;
         lidar_cloud->points.resize(cnt);
-        // down_sampling_voxel(*lidar_cloud, 0.03);
+//        std::cout << "lidar cloud size:" << lidar_cloud->size() << std::endl;
+      // down_sampling_voxel(*lidar_cloud, 0.03);
         projection(extrinsic_params, cam, lidar_cloud, depth_projection_img);
         cv::Mat map_img = cv::Mat::zeros(cam.height_, cam.width_, CV_8UC3);
         for (int x = 0; x < map_img.cols; x++)

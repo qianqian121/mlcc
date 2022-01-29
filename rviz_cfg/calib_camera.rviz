@@ -257,7 +257,7 @@ Visualization Manager:
       Topic: /aft_mapped_path
       Unreliable: false
       Value: true
-    - Alpha: 1
+    - Alpha: 0.2
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
         Max Value: 8.924942970275879
@@ -267,7 +267,7 @@ Visualization Manager:
       Channel Name: intensity
       Class: rviz/PointCloud2
       Color: 239; 41; 41
-      Color Transformer: FlatColor
+      Color Transformer: RGB8
       Decay Time: 10000
       Enabled: true
       Invert Rainbow: false
@@ -279,7 +279,7 @@ Visualization Manager:
       Position Transformer: XYZ
       Queue Size: 10000
       Selectable: true
-      Size (Pixels): 10
+      Size (Pixels): 1
       Size (m): 0.009999999776482582
       Style: Points
       Topic: /map_surf
@@ -287,7 +287,7 @@ Visualization Manager:
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
-    - Alpha: 1
+    - Alpha: 1.0
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
         Max Value: 62.54031753540039
@@ -298,7 +298,7 @@ Visualization Manager:
       Class: rviz/PointCloud2
       Color: 255; 255; 255
       Color Transformer: RGB8
-      Decay Time: 10000
+      Decay Time: 0
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
@@ -342,7 +342,7 @@ Visualization Manager:
       Size (Pixels): 1
       Size (m): 0.009999999776482582
       Style: Points
-      Topic: /map_dbg
+      Topic: /map_surf_contrast
       Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
