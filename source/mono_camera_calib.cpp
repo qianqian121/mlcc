@@ -305,6 +305,9 @@ int main(int argc, char **argv)
     int print_cnt = 0;
     while (ros::ok())
     {
+        calib.pub_color_voxel();
+        calib.pub_cutted_color_voxel();
+
         /* visualize the colorized point cloud */
         Eigen::Vector3d euler_angle = calib.cams[0].ext_R.eulerAngles(2, 1, 0);
         Eigen::Vector3d transation = calib.cams[0].ext_t;

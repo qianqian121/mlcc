@@ -97,7 +97,7 @@ public:
     int points_size_threshold_;
     int update_size_threshold_;
     int new_points_;
-    bool init_octo_;
+    bool init_octo_{false};
     bool update_enable_;
 
     OctoTree(int layer, int points_size_threshold, float planer_threshold):
@@ -242,6 +242,30 @@ public:
                     if (leaves_[i] != nullptr)
                         leaves_[i]->get_plane_list(plane_list);
     }
+
+    void PaintPoints(pcl::PointCloud<pcl::PointXYZRGB>& color_cloud) const {
+      if (!init_octo_) return;
+
+      if (octo_state_ == 0) {
+        std::vector<unsigned int> colors;
+        colors.push_back(static_cast<unsigned int>(rand() % 256));
+        colors.push_back(static_cast<unsigned int>(rand() % 256));
+        colors.push_back(static_cast<unsigned int>(rand() % 256));
+        for (const auto& pv : temp_points_)
+        {
+          pcl::PointXYZRGB pi;
+          pi.x = pv[0]; pi.y = pv[1]; pi.z = pv[2];
+          pi.r = colors[0]; pi.g = colors[1]; pi.b = colors[2];
+          color_cloud.points.push_back(pi);
+        }
+      } else if (layer_ < max_layer) {
+        for (const auto& leaf : leaves_) {
+          if (leaf) {
+            leaf->PaintPoints(color_cloud);
+          }
+        }
+      }
+    }
 };
 
 class Calibration
@@ -257,6 +281,11 @@ public:
     ros::Publisher pub_dbg =
         _nh.advertise<sensor_msgs::PointCloud2>("/debug", 100);
 
+    ros::Publisher pub_voxel =
+        _nh.advertise<sensor_msgs::PointCloud2>("/color_voxel", 100);
+    ros::Publisher pub_cutted_voxel =
+        _nh.advertise<sensor_msgs::PointCloud2>("/cutted_color_voxel", 100);
+
     // Camera Settings
     std::vector<Camera> cams;
 
@@ -268,6 +297,9 @@ public:
     std::vector<LiDAR> ext_lidars;
     pcl::PointCloud<pcl::PointXYZI>::Ptr lidar_edge_clouds; // 存储平面交接点云 global frame
     std::vector<int> lidar_edge_numbers;
+
+    pcl::PointCloud<pcl::PointXYZRGB> voxel_color_cloud_;
+    pcl::PointCloud<pcl::PointXYZRGB> cutted_voxel_color_cloud_;
 
     std::string lidar_topic_name_ = "";
     std::string image_topic_name_ = "";
@@ -685,28 +717,58 @@ public:
                 }
             }
         }
+        for (const auto& [_, oct_tree_node] : voxel_map) {
+          std::vector<unsigned int> colors;
+          colors.push_back(static_cast<unsigned int>(rand() % 256));
+          colors.push_back(static_cast<unsigned int>(rand() % 256));
+          colors.push_back(static_cast<unsigned int>(rand() % 256));
+          for (const auto& pv : oct_tree_node->temp_points_)
+          {
+            pcl::PointXYZRGB pi;
+            pi.x = pv[0]; pi.y = pv[1]; pi.z = pv[2];
+            pi.r = colors[0]; pi.g = colors[1]; pi.b = colors[2];
+            voxel_color_cloud_.points.push_back(pi);
+          }
+        }
         for (auto iter = voxel_map.begin(); iter != voxel_map.end(); ++iter)
         {
             down_sampling_voxel((iter->second->temp_points_), down_sample_size_);
             iter->second->init_octo_tree();
         }
+        for (const auto& [_, oct_tree_node] : voxel_map) {
+          oct_tree_node->PaintPoints(cutted_voxel_color_cloud_);
+        }
+    }
+
+    void pub_color_voxel() {
+      sensor_msgs::PointCloud2 color_voxel_msg;
+      pcl::toROSMsg(voxel_color_cloud_, color_voxel_msg);
+      color_voxel_msg.header.frame_id = "camera_init";
+      pub_voxel.publish(color_voxel_msg);
+    }
+
+    void pub_cutted_color_voxel() {
+      sensor_msgs::PointCloud2 color_voxel_msg;
+      pcl::toROSMsg(cutted_voxel_color_cloud_, color_voxel_msg);
+      color_voxel_msg.header.frame_id = "camera_init";
+      pub_cutted_voxel.publish(color_voxel_msg);
     }
 
     void debugVoxel(std::unordered_map<VOXEL_LOC, OctoTree*>& voxel_map)
     {
         ros::Rate loop(500);
         lidar_edge_clouds = pcl::PointCloud<pcl::PointXYZI>::Ptr(new pcl::PointCloud<pcl::PointXYZI>);
-        for (auto iter = voxel_map.begin(); iter != voxel_map.end(); iter++)
+        for (auto& [_, oct_tree_node] : voxel_map)
         {
             std::vector<Plane*> plane_list;
             std::vector<Plane*> merge_plane_list;
-            iter->second->get_plane_list(plane_list);
+            oct_tree_node->get_plane_list(plane_list);
 
             if (plane_list.size() >= 1)
             {
                 pcl::KdTreeFLANN<pcl::PointXYZI> kd_tree;
                 pcl::PointCloud<pcl::PointXYZI> input_cloud;
-                for (auto pv : iter->second->temp_points_)
+                for (auto& pv : oct_tree_node->temp_points_)
                 {
                     pcl::PointXYZI p;
                     p.x = pv[0]; p.y = pv[1]; p.z = pv[2];
@@ -738,10 +800,6 @@ public:
                     loop.sleep();
                 }
                  std::cout << "merge plane size:" << merge_plane_list.size() << std::endl;
-                Eigen::Vector3d voxel_origin;
-                voxel_origin[0] = iter->second->voxel_center_[0] - 2 * iter->second->quater_length_;
-                voxel_origin[1] = iter->second->voxel_center_[1] - 2 * iter->second->quater_length_;
-                voxel_origin[2] = iter->second->voxel_center_[2] - 2 * iter->second->quater_length_;
 
                 for (int p1_index = 0; p1_index < merge_plane_list.size() - 1; p1_index++)
                 {
@@ -788,11 +846,6 @@ public:
                                     lidar_edge_clouds->points.push_back(p);
                                 }
                         }
-//                        sensor_msgs::PointCloud2 dbg_msg;
-//                        pcl::toROSMsg(line_cloud, dbg_msg);
-//                        dbg_msg.header.frame_id = "camera_init";
-//                        pub_surf_contrast.publish(dbg_msg);
-//                        loop.sleep();
                     }
                 }
             }
