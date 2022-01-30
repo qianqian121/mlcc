@@ -50,7 +50,7 @@ typedef struct Plane
     int points_size = 0;
     bool is_plane = false;
     bool is_init = false;
-    int id;
+    int id{0};
     bool is_update = false;
 } Plane;
 
@@ -142,7 +142,7 @@ public:
         Eigen::Vector3d evecMid = evecs.real().col(evalsMid);
         Eigen::Vector3d evecMax = evecs.real().col(evalsMax);
 
-        if (evalsReal(evalsMin) < planer_threshold_ && evalsReal(evalsMid) > 0.01)
+        if (layer_ == (max_layer - 1) || (evalsReal(evalsMin) < planer_threshold_ && evalsReal(evalsMid) > 0.01))
         {
             plane->normal << evecs.real()(0, evalsMin), evecs.real()(1, evalsMin),
                              evecs.real()(2, evalsMin);
@@ -285,6 +285,8 @@ public:
         _nh.advertise<sensor_msgs::PointCloud2>("/color_voxel", 100);
     ros::Publisher pub_cutted_voxel =
         _nh.advertise<sensor_msgs::PointCloud2>("/cutted_color_voxel", 100);
+    ros::Publisher pub_merged_voxel =
+        _nh.advertise<sensor_msgs::PointCloud2>("/merged_color_voxel", 100);
 
     // Camera Settings
     std::vector<Camera> cams;
@@ -300,6 +302,7 @@ public:
 
     pcl::PointCloud<pcl::PointXYZRGB> voxel_color_cloud_;
     pcl::PointCloud<pcl::PointXYZRGB> cutted_voxel_color_cloud_;
+    pcl::PointCloud<pcl::PointXYZRGB> merged_voxel_color_cloud_;
 
     std::string lidar_topic_name_ = "";
     std::string image_topic_name_ = "";
@@ -754,6 +757,13 @@ public:
       pub_cutted_voxel.publish(color_voxel_msg);
     }
 
+    void pub_merged_color_voxel() {
+      sensor_msgs::PointCloud2 color_voxel_msg;
+      pcl::toROSMsg(merged_voxel_color_cloud_, color_voxel_msg);
+      color_voxel_msg.header.frame_id = "camera_init";
+      pub_merged_voxel.publish(color_voxel_msg);
+    }
+
     void debugVoxel(std::unordered_map<VOXEL_LOC, OctoTree*>& voxel_map)
     {
         ros::Rate loop(500);
@@ -779,7 +789,6 @@ public:
                 mergePlane(plane_list, merge_plane_list);
                 for (auto plane : merge_plane_list)
                 {
-                    pcl::PointCloud<pcl::PointXYZRGB> color_cloud;
                     std::vector<unsigned int> colors;
                     colors.push_back(static_cast<unsigned int>(rand() % 256));
                     colors.push_back(static_cast<unsigned int>(rand() % 256));
@@ -789,17 +798,10 @@ public:
                         pcl::PointXYZRGB pi;
                         pi.x = pv[0]; pi.y = pv[1]; pi.z = pv[2];
                         pi.r = colors[0]; pi.g = colors[1]; pi.b = colors[2];
-                        color_cloud.points.push_back(pi);
+                        merged_voxel_color_cloud_.points.push_back(pi);
                     }
-                    sensor_msgs::PointCloud2 dbg_msg;
-                    pcl::toROSMsg(color_cloud, dbg_msg);
-                    dbg_msg.header.frame_id = "camera_init";
-                    pub_surf.publish(dbg_msg);
-                  std::cout << "merge plane points size:" << dbg_msg.data.size() << std::endl;
-                  std::cout << "merge plane points size:" << color_cloud.points.size() << std::endl;
-                    loop.sleep();
                 }
-                 std::cout << "merge plane size:" << merge_plane_list.size() << std::endl;
+                // std::cout << "merge plane size:" << merge_plane_list.size() << std::endl;
 
                 for (int p1_index = 0; p1_index < merge_plane_list.size() - 1; p1_index++)
                 {

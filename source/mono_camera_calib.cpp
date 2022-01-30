@@ -307,6 +307,7 @@ int main(int argc, char **argv)
     {
         calib.pub_color_voxel();
         calib.pub_cutted_color_voxel();
+        calib.pub_merged_color_voxel();
 
         /* visualize the colorized point cloud */
         Eigen::Vector3d euler_angle = calib.cams[0].ext_R.eulerAngles(2, 1, 0);
