@@ -310,6 +310,7 @@ int main(int argc, char **argv)
         calib.pub_merged_color_voxel();
         calib.pub_fitted_svd_color_voxel();
         calib.pub_fitted_color_voxel();
+        calib.pub_lidar_edge();
 
         /* visualize the colorized point cloud */
         Eigen::Vector3d euler_angle = calib.cams[0].ext_R.eulerAngles(2, 1, 0);

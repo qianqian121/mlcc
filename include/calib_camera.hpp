@@ -249,6 +249,99 @@ void mergePlane(std::vector<Plane*>& origin_list, std::vector<Plane*>& merge_lis
   }
 }
 
+template<typename T = pcl::PointXYZ>
+std::vector<Eigen::Vector3d> projectLine(const SinglePlane<T>& plane1, const SinglePlane<T>& plane2,
+    double theta_min, double theta_max)
+{
+  std::vector<Eigen::Vector3d> line_point;
+  float theta = plane1.normal.dot(plane2.normal);
+  if (!(theta > theta_max && theta < theta_min)) return line_point;
+
+  Eigen::Vector3d projection_normal;
+  Eigen::Vector3d projection_center;
+  typename pcl::PointCloud<T>::Ptr use_points;
+  typename pcl::PointCloud<T> temp_points;
+  int flag = 0;
+  if (plane1.cloud.size() > plane2.cloud.size())
+  {
+    projection_normal = plane1.normal;
+    projection_center = Eigen::Vector3d(plane1.p_center.x, plane1.p_center.y, plane1.p_center.z);
+    use_points = plane2.cloud.makeShared();
+    flag = 0;
+  }
+  else
+  {
+    projection_normal = plane2.normal;
+    projection_center = Eigen::Vector3d(plane2.p_center.x, plane2.p_center.y, plane2.p_center.z);
+    use_points = plane1.cloud.makeShared();
+    flag = 1;
+  }
+  for (int round = 0; round < 2; round++)
+  {
+    if (round == 1)
+    {
+      if (flag == 0)
+      {
+        projection_normal = plane2.normal;
+        projection_center = Eigen::Vector3d(plane2.p_center.x, plane2.p_center.y, plane2.p_center.z);
+        use_points = temp_points.makeShared();
+      }
+      else
+      {
+        projection_normal = plane1.normal;
+        projection_center = Eigen::Vector3d(plane1.p_center.x, plane1.p_center.y, plane1.p_center.z);
+        use_points = temp_points.makeShared();
+      }
+    }
+    double A = projection_normal[0];
+    double B = projection_normal[1];
+    double C = projection_normal[2];
+    double D = -(A * projection_center[0] + B * projection_center[1] + C * projection_center[2]);
+    std::vector<Eigen::Vector3d> projection_points;
+    Eigen::Vector3d x_axis(1, 1, 0);
+    if (C != 0)
+      x_axis[2] = -(A + B) / C;
+    else if (B != 0)
+      x_axis[1] = -A / B;
+    else
+    {
+      x_axis[0] = 0;
+      x_axis[1] = 1;
+    }
+    x_axis.normalize();
+    Eigen::Vector3d y_axis = projection_normal.cross(x_axis);
+    y_axis.normalize();
+    double ax = x_axis[0];
+    double bx = x_axis[1];
+    double cx = x_axis[2];
+    double dx = -(ax * projection_center[0] + bx * projection_center[1] + cx * projection_center[2]);
+    double ay = y_axis[0];
+    double by = y_axis[1];
+    double cy = y_axis[2];
+    double dy = -(ay * projection_center[0] + by * projection_center[1] + cy * projection_center[2]);
+    for (const auto& pt : use_points->points)
+    {
+      double x = pt.x;
+      double y = pt.y;
+      double z = pt.z;
+      double dis = fabs(x * A + y * B + z * C + D);
+      Eigen::Vector3d cur_project;
+
+      cur_project[0] = (-A * (B * y + C * z + D) + x * (B * B + C * C)) /
+                       (A * A + B * B + C * C);
+      cur_project[1] = (-B * (A * x + C * z + D) + y * (A * A + C * C)) /
+                       (A * A + B * B + C * C);
+      cur_project[2] = (-C * (A * x + B * y + D) + z * (A * A + B * B)) /
+                       (A * A + B * B + C * C);
+      if (round == 0)
+        temp_points.push_back(pt);
+      else
+        line_point.push_back(cur_project);
+    }
+  }
+  return line_point;
+}
+
 class LiDAR
 {
 public:
@@ -282,6 +375,8 @@ class OctoTree
 public:
     std::vector<Eigen::Vector3d> temp_points_;
     pcl::PointCloud<pcl::PointXYZ> node_cloud_;
+    pcl::PointCloud<pcl::PointXYZ> line_cloud_;
+    pcl::KdTreeFLANN<pcl::PointXYZ> kd_tree_;
     std::vector<Plane *> plane_list_;
     std::vector<Plane *> merge_plane_list_;
     std::vector<SinglePlaneXYZ> fitted_svd_planes_;
@@ -500,6 +595,41 @@ public:
       }
     }
 
+    void ExtractEdge(const pcl::PointCloud<pcl::PointXYZI>::Ptr& lidar_edge_cloud,
+        double theta_min, double theta_max, double dist_threshold) {
+      if (fitted_planes_.empty()) return;
+
+      kd_tree_.setInputCloud(node_cloud_.makeShared());
+      for (int p1_index = 0; p1_index < fitted_planes_.size() - 1; p1_index++) {
+        for (int p2_index = p1_index + 1; p2_index < fitted_planes_.size(); p2_index++) {
+          const auto &line_point = projectLine(fitted_planes_[p1_index], fitted_planes_[p2_index], theta_min,
+                                               theta_max);
+          // std::cout << "line size:" << line_point.size() << std::endl;
+          if (line_point.empty()) break;
+
+          for (const auto & pt : line_point) {
+            pcl::PointXYZ p;
+            p.x = pt[0];
+            p.y = pt[1];
+            p.z = pt[2];
+            int K = 1;
+            // 创建两个向量，分别存放近邻的索引值、近邻的中心距
+            std::vector<int> pointIdxNKNSearch(K);
+            std::vector<float> pointNKNSquaredDistance(K);
+            if (kd_tree_.nearestKSearch(p, K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0) {
+              if (pointNKNSquaredDistance[0] < dist_threshold) {
+                line_cloud_.push_back(p);
+                lidar_edge_cloud->points.emplace_back();
+                lidar_edge_cloud->points.back().x = p.x;
+                lidar_edge_cloud->points.back().y = p.y;
+                lidar_edge_cloud->points.back().z = p.z;
+              }
+            }
+          }
+        }
+      }
+    }
+
     void PaintPoints(pcl::PointCloud<pcl::PointXYZRGB>& color_cloud) const {
       if (!init_octo_) return;
 
@@ -675,10 +805,6 @@ public:
         adaptVoxel(adapt_voxel_map, adaptive_voxel_size_, eigen_threshold_);
         debugVoxel(adapt_voxel_map);
         down_sampling_voxel(*lidar_edge_clouds, down_sample_voxel_size_);
-        sensor_msgs::PointCloud2 dbg_msg;
-        pcl::toROSMsg(*lidar_edge_clouds, dbg_msg);
-        dbg_msg.header.frame_id = "camera_init";
-        pub_surf_contrast.publish(dbg_msg);
 
         ROS_INFO_STREAM("Adaptive voxel sucess!");
         time_t t2 = clock();
@@ -1052,97 +1178,22 @@ public:
       pub_fitted_voxel.publish(color_voxel_msg);
     }
 
+    void pub_lidar_edge() {
+      sensor_msgs::PointCloud2 dbg_msg;
+      pcl::toROSMsg(*lidar_edge_clouds, dbg_msg);
+      dbg_msg.header.frame_id = "camera_init";
+      pub_surf_contrast.publish(dbg_msg);
+    }
+
     void debugVoxel(std::unordered_map<VOXEL_LOC, OctoTree*>& voxel_map)
     {
-        ros::Rate loop(500);
         lidar_edge_clouds = pcl::PointCloud<pcl::PointXYZI>::Ptr(new pcl::PointCloud<pcl::PointXYZI>);
         for (auto& [_, oct_tree_node] : voxel_map)
         {
             oct_tree_node->MergePlane(merged_voxel_color_cloud_);
             oct_tree_node->FitPlane(fit_svd_plane_config_, fit_plane_config_,
                 fitted_svd_color_cloud_, fitted_color_cloud_);
-            continue;
-            std::vector<Plane*> plane_list;
-            std::vector<Plane*> merge_plane_list;
-            oct_tree_node->get_plane_list(plane_list);
-
-            if (plane_list.size() >= 1)
-            {
-                pcl::KdTreeFLANN<pcl::PointXYZI> kd_tree;
-                pcl::PointCloud<pcl::PointXYZI> input_cloud;
-                for (auto& pv : oct_tree_node->temp_points_)
-                {
-                    pcl::PointXYZI p;
-                    p.x = pv[0]; p.y = pv[1]; p.z = pv[2];
-                    input_cloud.push_back(p);
-                }
-                kd_tree.setInputCloud(input_cloud.makeShared());
-                // std::cout << "origin plane size:" << plane_list.size() << std::endl;
-                mergePlane(plane_list, merge_plane_list);
-                for (auto plane : merge_plane_list)
-                {
-                    std::vector<unsigned int> colors;
-                    colors.push_back(static_cast<unsigned int>(rand() % 256));
-                    colors.push_back(static_cast<unsigned int>(rand() % 256));
-                    colors.push_back(static_cast<unsigned int>(rand() % 256));
-                    for (auto pv : plane->plane_points)
-                    {
-                        pcl::PointXYZRGB pi;
-                        pi.x = pv[0]; pi.y = pv[1]; pi.z = pv[2];
-                        pi.r = colors[0]; pi.g = colors[1]; pi.b = colors[2];
-                        merged_voxel_color_cloud_.points.push_back(pi);
-                    }
-                }
-                // std::cout << "merge plane size:" << merge_plane_list.size() << std::endl;
-
-                for (int p1_index = 0; p1_index < merge_plane_list.size() - 1; p1_index++)
-                {
-                    for (int p2_index = p1_index + 1; p2_index < merge_plane_list.size(); p2_index++)
-                    {
-                        std::vector<Eigen::Vector3d> line_point;
-                        projectLine(merge_plane_list[p1_index], merge_plane_list[p2_index], line_point);
-                        // std::cout << "line size:" << line_point.size() << std::endl;
-                        if (line_point.size() == 0) break;
-
-                        pcl::KdTreeFLANN<pcl::PointXYZI> kd_tree1;
-                        pcl::KdTreeFLANN<pcl::PointXYZI> kd_tree2;
-                        pcl::PointCloud<pcl::PointXYZI> input_cloud1;
-                        pcl::PointCloud<pcl::PointXYZI> input_cloud2;
-                        for (auto pv : merge_plane_list[p1_index]->plane_points)
-                        {
-                            pcl::PointXYZI pi;
-                            pi.x = pv[0]; pi.y = pv[1]; pi.z = pv[2];
-                            input_cloud1.push_back(pi);
-                        }
-                        for (auto pv : merge_plane_list[p2_index]->plane_points)
-                        {
-                            pcl::PointXYZI pi;
-                            pi.x = pv[0]; pi.y = pv[1]; pi.z = pv[2];
-                            input_cloud2.push_back(pi);
-                        }
-                        kd_tree1.setInputCloud(input_cloud1.makeShared());
-                        kd_tree2.setInputCloud(input_cloud2.makeShared());
-                        pcl::PointCloud<pcl::PointXYZI> line_cloud;
-
-                        for (size_t j = 0; j < line_point.size(); j++)
-                        {
-                            pcl::PointXYZI p;
-                            p.x = line_point[j][0]; p.y = line_point[j][1]; p.z = line_point[j][2];
-                            int K = 1;
-                            // 创建两个向量，分别存放近邻的索引值、近邻的中心距
-                            std::vector<int> pointIdxNKNSearch(K);
-                            std::vector<float> pointNKNSquaredDistance(K);
-                            if (kd_tree.nearestKSearch(p, K, pointIdxNKNSearch, pointNKNSquaredDistance) > 0)
-                                if (pointNKNSquaredDistance[0] < 0.009)
-                                if (pointNKNSquaredDistance[0] < adaptive_edge_distance_threshold_)
-                                {
-                                    line_cloud.points.push_back(p);
-                                    lidar_edge_clouds->points.push_back(p);
-                                }
-                        }
-                    }
-                }
-            }
+            oct_tree_node->ExtractEdge(lidar_edge_clouds, theta_min_, theta_max_, adaptive_edge_distance_threshold_);
         }
     }
 
