@@ -23,19 +23,20 @@ struct VPnPData
 
 typedef Eigen::Matrix<double, 6, 1> Vector6d;
 //存放每一个点的索引值和其对应的曲率
-typedef struct PCURVATURE
+struct PCURVATURE
 {
     int index;
     float curvature;
-} PCURVATURE;
+};
 
-typedef struct SinglePlane
+template<typename T = pcl::PointXYZI>
+struct SinglePlane
 {
-    pcl::PointCloud<pcl::PointXYZI> cloud;
+    pcl::PointCloud<T> cloud;
     pcl::PointXYZ p_center;
     Eigen::Vector3d normal;
     int index;
-} SinglePlane;
+};
 
 class VOXEL_LOC
 {
@@ -287,14 +288,14 @@ void mapJet(double v, double vmin, double vmax, uint8_t &r, uint8_t &g,
   g = (uint8_t)(255 * dg);
   b = (uint8_t)(255 * db);
 }
-typedef struct VoxelGrid {
+struct VoxelGrid {
   float size = 0.5;
   int index;
   Eigen::Vector3d origin;
   pcl::PointCloud<pcl::PointXYZI> cloud;
-} VoxelGrid;
+};
 
-typedef struct Voxel {
+struct Voxel {
   float size;
   Eigen::Vector3d voxel_origin;
   std::vector<uint8_t> voxel_color;
@@ -304,6 +305,6 @@ typedef struct Voxel {
     cloud = pcl::PointCloud<pcl::PointXYZI>::Ptr(
         new pcl::PointCloud<pcl::PointXYZI>);
   };
-} Voxel;
+};
 
 #endif

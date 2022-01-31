@@ -37,13 +37,106 @@
 
 #define max_layer 4
 
-typedef struct Plane
+using SinglePlaneXYZ = SinglePlane<pcl::PointXYZ>;
+
+struct FitPlaneConfig {
+  double eps_angle{0.1};
+  double ransac_dis_thre{0.01};
+  int plane_size_threshold{20};
+
+  FitPlaneConfig() = default;
+
+  FitPlaneConfig(double eps_angle, double ransac_dis_thre, int plane_size_threshold) :
+      eps_angle(eps_angle),
+      ransac_dis_thre(ransac_dis_thre),
+      plane_size_threshold(plane_size_threshold) {}
+};
+
+SinglePlaneXYZ FitSinglePlane(pcl::PointCloud<pcl::PointXYZ>& cloud,
+                              pcl::PointCloud<pcl::PointXYZRGB>& color_planner_cloud,
+                              const Eigen::Vector3d& axis,
+                              const FitPlaneConfig& fit_config) {
+  SinglePlaneXYZ single_plane;
+  if (cloud.size() < fit_config.plane_size_threshold) return single_plane;
+
+  // 创建一个体素滤波器
+  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filter(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::copyPointCloud(cloud, *cloud_filter);
+  //创建一个模型参数对象，用于记录结果
+  pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
+  // inliers表示误差能容忍的点，记录点云序号
+  pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
+  //创建一个分割器
+  pcl::SACSegmentation<pcl::PointXYZ> seg;
+  // Optional,设置结果平面展示的点是分割掉的点还是分割剩下的点
+  seg.setOptimizeCoefficients(true);
+  // Mandatory-设置目标几何形状
+  seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE);
+  Eigen::Vector3f axis_3f(axis[0], axis[1], axis[2]);
+  seg.setAxis(axis_3f);
+  seg.setEpsAngle(fit_config.eps_angle);
+  //分割方法：随机采样法
+  seg.setMethodType(pcl::SAC_RANSAC);
+  //设置误差容忍范围，也就是阈值
+  seg.setDistanceThreshold(fit_config.ransac_dis_thre);
+
+  pcl::PointCloud<pcl::PointXYZ> planner_cloud;
+  pcl::ExtractIndices<pcl::PointXYZ> extract;
+  //输入点云
+  seg.setInputCloud(cloud_filter);
+  seg.setMaxIterations(500);
+  //分割点云
+  seg.segment(*inliers, *coefficients);
+  if (inliers->indices.size() == 0)
+  {
+    ROS_INFO_STREAM("Could not estimate a planner model for the given dataset");
+    return single_plane;
+  }
+  extract.setIndices(inliers);
+  extract.setInputCloud(cloud_filter);
+  extract.filter(planner_cloud);
+
+  if (planner_cloud.size() > fit_config.plane_size_threshold)
+  {
+    std::vector<unsigned int> colors;
+    colors.push_back(static_cast<unsigned int>(rand() % 256));
+    colors.push_back(static_cast<unsigned int>(rand() % 256));
+    colors.push_back(static_cast<unsigned int>(rand() % 256));
+    pcl::PointXYZ p_center(0, 0, 0);
+    for (size_t i = 0; i < planner_cloud.points.size(); i++)
+    {
+      pcl::PointXYZRGB p;
+      p.x = planner_cloud.points[i].x;
+      p.y = planner_cloud.points[i].y;
+      p.z = planner_cloud.points[i].z;
+      p_center.x += p.x;
+      p_center.y += p.y;
+      p_center.z += p.z;
+      p.r = colors[0]; p.g = colors[1]; p.b = colors[2];
+      color_planner_cloud.push_back(p);
+    }
+    p_center.x = p_center.x / planner_cloud.size();
+    p_center.y = p_center.y / planner_cloud.size();
+    p_center.z = p_center.z / planner_cloud.size();
+
+    single_plane.cloud = planner_cloud;
+    single_plane.p_center = p_center;
+    single_plane.normal << coefficients->values[0],
+        coefficients->values[1], coefficients->values[2];
+  }
+  extract.setNegative(true);
+  extract.filter(cloud);
+  return single_plane;
+}
+
+struct Plane
 {
     pcl::PointXYZINormal p_center;
     Eigen::Vector3d center;
     Eigen::Vector3d normal;
     Eigen::Matrix3d covariance;
     std::vector<Eigen::Vector3d> plane_points;
+    pcl::PointCloud<pcl::PointXYZ> cloud;
     float radius = 0;
     float min_eigen_value = 1;
     float d = 0;
@@ -52,7 +145,109 @@ typedef struct Plane
     bool is_init = false;
     int id{0};
     bool is_update = false;
-} Plane;
+};
+
+void mergePlane(std::vector<Plane*>& origin_list, std::vector<Plane*>& merge_list)
+{
+  for (size_t i = 0; i < origin_list.size(); i++)
+    origin_list[i]->id = 0;
+
+  int current_id = 1;
+  for (auto iter = origin_list.end() - 1; iter != origin_list.begin(); iter--)
+  {
+    for (auto iter2 = origin_list.begin(); iter2 != iter; iter2++)
+    {
+      Eigen::Vector3d normal_diff = (*iter)->normal - (*iter2)->normal;
+      Eigen::Vector3d normal_add = (*iter)->normal + (*iter2)->normal;
+      double dis1 = fabs((*iter)->normal(0) * (*iter2)->center(0) +
+                         (*iter)->normal(1) * (*iter2)->center(1) +
+                         (*iter)->normal(2) * (*iter2)->center(2) + (*iter)->d);
+      double dis2 = fabs((*iter2)->normal(0) * (*iter)->center(0) +
+                         (*iter2)->normal(1) * (*iter)->center(1) +
+                         (*iter2)->normal(2) * (*iter)->center(2) + (*iter2)->d);
+      if (normal_diff.norm() < 0.2 || normal_add.norm() < 0.2)
+        if (dis1 < 0.05 && dis2 < 0.05)
+        {
+          if ((*iter)->id == 0 && (*iter2)->id == 0)
+          {
+            (*iter)->id = current_id;
+            (*iter2)->id = current_id;
+            current_id++;
+          }
+          else if ((*iter)->id == 0 && (*iter2)->id != 0)
+            (*iter)->id = (*iter2)->id;
+          else if ((*iter)->id != 0 && (*iter2)->id == 0)
+            (*iter2)->id = (*iter)->id;
+        }
+    }
+  }
+  std::vector<int> merge_flag;
+  for (size_t i = 0; i < origin_list.size(); i++)
+  {
+    auto it = std::find(merge_flag.begin(), merge_flag.end(), origin_list[i]->id);
+    if (it != merge_flag.end()) continue;
+
+    if (origin_list[i]->id == 0)
+    {
+      merge_list.push_back(origin_list[i]);
+      continue;
+    }
+    Plane* merge_plane = new Plane;
+    (*merge_plane) = (*origin_list[i]);
+    for (size_t j = 0; j < origin_list.size(); j++)
+    {
+      if (i == j) continue;
+      if (origin_list[i]->id != 0)
+        if (origin_list[j]->id == origin_list[i]->id)
+          for (auto pv : origin_list[j]->plane_points) {
+            merge_plane->plane_points.push_back(pv);
+            merge_plane->cloud.points.emplace_back(pv[0], pv[1], pv[2]);
+          }
+    }
+    merge_plane->covariance = Eigen::Matrix3d::Zero();
+    merge_plane->center = Eigen::Vector3d::Zero();
+    merge_plane->normal = Eigen::Vector3d::Zero();
+    merge_plane->points_size = merge_plane->plane_points.size();
+    merge_plane->radius = 0;
+    for (auto pv : merge_plane->plane_points)
+    {
+      merge_plane->covariance += pv * pv.transpose();
+      merge_plane->center += pv;
+    }
+    merge_plane->center = merge_plane->center / merge_plane->points_size;
+    merge_plane->covariance = merge_plane->covariance / merge_plane->points_size -
+                              merge_plane->center * merge_plane->center.transpose();
+    Eigen::EigenSolver<Eigen::Matrix3d> es(merge_plane->covariance);
+    Eigen::Matrix3cd evecs = es.eigenvectors();
+    Eigen::Vector3cd evals = es.eigenvalues();
+    Eigen::Vector3d evalsReal;
+    evalsReal = evals.real();
+    Eigen::Matrix3f::Index evalsMin, evalsMax;
+    evalsReal.rowwise().sum().minCoeff(&evalsMin);
+    evalsReal.rowwise().sum().maxCoeff(&evalsMax);
+    int evalsMid = 3 - evalsMin - evalsMax;
+    Eigen::Vector3d evecMin = evecs.real().col(evalsMin);
+    Eigen::Vector3d evecMid = evecs.real().col(evalsMid);
+    Eigen::Vector3d evecMax = evecs.real().col(evalsMax);
+    merge_plane->id = origin_list[i]->id;
+    merge_plane->normal << evecs.real()(0, evalsMin),
+        evecs.real()(1, evalsMin), evecs.real()(2, evalsMin);
+    merge_plane->min_eigen_value = evalsReal(evalsMin);
+    merge_plane->radius = sqrt(evalsReal(evalsMax));
+    merge_plane->d = -(merge_plane->normal(0) * merge_plane->center(0) +
+                       merge_plane->normal(1) * merge_plane->center(1) +
+                       merge_plane->normal(2) * merge_plane->center(2));
+    merge_plane->p_center.x = merge_plane->center(0);
+    merge_plane->p_center.y = merge_plane->center(1);
+    merge_plane->p_center.z = merge_plane->center(2);
+    merge_plane->p_center.normal_x = merge_plane->normal(0);
+    merge_plane->p_center.normal_y = merge_plane->normal(1);
+    merge_plane->p_center.normal_z = merge_plane->normal(2);
+    merge_plane->is_plane = true;
+    merge_flag.push_back(merge_plane->id);
+    merge_list.push_back(merge_plane);
+  }
+}
 
 class LiDAR
 {
@@ -86,6 +281,11 @@ class OctoTree
 {
 public:
     std::vector<Eigen::Vector3d> temp_points_;
+    pcl::PointCloud<pcl::PointXYZ> node_cloud_;
+    std::vector<Plane *> plane_list_;
+    std::vector<Plane *> merge_plane_list_;
+    std::vector<SinglePlaneXYZ> fitted_svd_planes_;
+    std::vector<SinglePlaneXYZ> fitted_planes_;
     Plane* plane_ptr_;
     int layer_;
     int octo_state_; // 0 is end of tree, 1 is not
@@ -160,8 +360,11 @@ public:
             plane->p_center.normal_z = plane->normal(2);
             plane->is_plane = true;
             plane->is_update = true;
-            for (auto pv : points)
+            for (auto pv : points) {
                 plane->plane_points.push_back(pv);
+                plane->cloud.points.emplace_back(pv[0], pv[1], pv[2]);
+                node_cloud_.points.emplace_back(pv[0], pv[1], pv[2]);
+            }
         }
         else
             plane->is_plane = false;
@@ -243,6 +446,60 @@ public:
                         leaves_[i]->get_plane_list(plane_list);
     }
 
+    void MergePlane(pcl::PointCloud<pcl::PointXYZRGB>& color_cloud) {
+      get_plane_list(plane_list_);
+
+      if (plane_list_.size() >= 1) {
+        pcl::KdTreeFLANN<pcl::PointXYZI> kd_tree;
+        pcl::PointCloud<pcl::PointXYZI> input_cloud;
+        for (auto &pv : temp_points_) {
+          pcl::PointXYZI p;
+          p.x = pv[0];
+          p.y = pv[1];
+          p.z = pv[2];
+          input_cloud.push_back(p);
+        }
+        kd_tree.setInputCloud(input_cloud.makeShared());
+        // std::cout << "origin plane size:" << plane_list.size() << std::endl;
+        mergePlane(plane_list_, merge_plane_list_);
+        for (auto plane : merge_plane_list_) {
+          std::vector<unsigned int> colors;
+          colors.push_back(static_cast<unsigned int>(rand() % 256));
+          colors.push_back(static_cast<unsigned int>(rand() % 256));
+          colors.push_back(static_cast<unsigned int>(rand() % 256));
+          for (auto pv : plane->plane_points) {
+            pcl::PointXYZRGB pi;
+            pi.x = pv[0];
+            pi.y = pv[1];
+            pi.z = pv[2];
+            pi.r = colors[0];
+            pi.g = colors[1];
+            pi.b = colors[2];
+            color_cloud.points.push_back(pi);
+          }
+        }
+      }
+    }
+
+    void FitPlane(const FitPlaneConfig& fit_svd_plane_config,
+        const FitPlaneConfig& fit_plane_config,
+        pcl::PointCloud<pcl::PointXYZRGB>& color_svd_planner_cloud,
+        pcl::PointCloud<pcl::PointXYZRGB>& color_planner_cloud) {
+      std::sort(merge_plane_list_.begin(), merge_plane_list_.end(), [](const auto* v1, const auto* v2){
+        return v1->plane_points.size() > v2->plane_points.size();
+      });
+      for (auto& plane : merge_plane_list_) {
+        const auto& fitted_svd_plane =
+            FitSinglePlane(plane->cloud, color_svd_planner_cloud, plane->normal, fit_svd_plane_config);
+        if (fitted_svd_plane.cloud.empty()) continue;
+        fitted_svd_planes_.push_back(fitted_svd_plane);
+        const auto& fitted_plane =
+            FitSinglePlane(node_cloud_, color_planner_cloud, fitted_svd_plane.normal, fit_plane_config);
+        if (fitted_plane.cloud.empty()) continue;
+        fitted_planes_.push_back(fitted_plane);
+      }
+    }
+
     void PaintPoints(pcl::PointCloud<pcl::PointXYZRGB>& color_cloud) const {
       if (!init_octo_) return;
 
@@ -287,6 +544,10 @@ public:
         _nh.advertise<sensor_msgs::PointCloud2>("/cutted_color_voxel", 100);
     ros::Publisher pub_merged_voxel =
         _nh.advertise<sensor_msgs::PointCloud2>("/merged_color_voxel", 100);
+    ros::Publisher pub_fitted_svd_voxel =
+        _nh.advertise<sensor_msgs::PointCloud2>("/fitted_svd_color_voxel", 100);
+    ros::Publisher pub_fitted_voxel =
+        _nh.advertise<sensor_msgs::PointCloud2>("/fitted_color_voxel", 100);
 
     // Camera Settings
     std::vector<Camera> cams;
@@ -303,6 +564,8 @@ public:
     pcl::PointCloud<pcl::PointXYZRGB> voxel_color_cloud_;
     pcl::PointCloud<pcl::PointXYZRGB> cutted_voxel_color_cloud_;
     pcl::PointCloud<pcl::PointXYZRGB> merged_voxel_color_cloud_;
+    pcl::PointCloud<pcl::PointXYZRGB> fitted_svd_color_cloud_;
+    pcl::PointCloud<pcl::PointXYZRGB> fitted_color_cloud_;
 
     std::string lidar_topic_name_ = "";
     std::string image_topic_name_ = "";
@@ -329,6 +592,9 @@ public:
     double eigen_threshold_ = 0.001;
     double down_sample_voxel_size_ = 0.02;
     double adaptive_edge_distance_threshold_ = 0.009;
+
+    FitPlaneConfig fit_svd_plane_config_{};
+    FitPlaneConfig fit_plane_config_{};
 
     Calibration(const std::vector<std::string>& CamCfgPaths, const std::string& CalibCfgFile,
                 bool use_ada_voxel)
@@ -572,6 +838,13 @@ public:
         eigen_threshold_ = fSettings["Adaptive.eigen_threshold"];
         down_sample_voxel_size_ = fSettings["Adaptive.down_sample_voxel_size"];
         adaptive_edge_distance_threshold_ = fSettings["Adaptive.edge_distance_threshold"];
+
+        fit_svd_plane_config_.eps_angle = fSettings["Svd.eps_angle"];
+        fit_svd_plane_config_.ransac_dis_thre = fSettings["Svd.ransac_dis_threshold"];
+        fit_svd_plane_config_.plane_size_threshold = fSettings["Svd.plane_size_threshold"];
+        fit_plane_config_.eps_angle = fSettings["Voxel.eps_angle"];
+        fit_plane_config_.ransac_dis_thre = fSettings["Voxel.ransac_dis_threshold"];
+        fit_plane_config_.plane_size_threshold = fSettings["Voxel.plane_size_threshold"];
         return true;
     }
 
@@ -703,10 +976,10 @@ public:
                 }
                 VOXEL_LOC position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1], (int64_t)loc_xyz[2]);
                 auto iter = voxel_map.find(position);
-                if (iter != voxel_map.end())
-                    voxel_map[position]->temp_points_.push_back(pt);
-                else
-                {
+                if (iter != voxel_map.end()) {
+                  voxel_map[position]->temp_points_.push_back(pt);
+                  voxel_map[position]->node_cloud_.points.emplace_back(pt[0], pt[1], pt[2]);
+                } else {
                     OctoTree *octo_tree = new OctoTree(0, adaptive_points_size_threshold_, eigen_threshold);
                     voxel_map[position] = octo_tree;
                     voxel_map[position]->quater_length_ = voxel_size / 4;
@@ -714,6 +987,7 @@ public:
                     voxel_map[position]->voxel_center_[1] = (0.5 + position.y) * voxel_size;
                     voxel_map[position]->voxel_center_[2] = (0.5 + position.z) * voxel_size;
                     voxel_map[position]->temp_points_.push_back(pt);
+                    voxel_map[position]->node_cloud_.points.emplace_back(pt[0], pt[1], pt[2]);
                     voxel_map[position]->new_points_++;
                     Eigen::Vector3d layer_point_size(20, 20, 20);
                     voxel_map[position]->layer_size_ = layer_point_size;
@@ -764,12 +1038,30 @@ public:
       pub_merged_voxel.publish(color_voxel_msg);
     }
 
+    void pub_fitted_svd_color_voxel() {
+      sensor_msgs::PointCloud2 color_voxel_msg;
+      pcl::toROSMsg(fitted_svd_color_cloud_, color_voxel_msg);
+      color_voxel_msg.header.frame_id = "camera_init";
+      pub_fitted_svd_voxel.publish(color_voxel_msg);
+    }
+
+    void pub_fitted_color_voxel() {
+      sensor_msgs::PointCloud2 color_voxel_msg;
+      pcl::toROSMsg(fitted_color_cloud_, color_voxel_msg);
+      color_voxel_msg.header.frame_id = "camera_init";
+      pub_fitted_voxel.publish(color_voxel_msg);
+    }
+
     void debugVoxel(std::unordered_map<VOXEL_LOC, OctoTree*>& voxel_map)
     {
         ros::Rate loop(500);
         lidar_edge_clouds = pcl::PointCloud<pcl::PointXYZI>::Ptr(new pcl::PointCloud<pcl::PointXYZI>);
         for (auto& [_, oct_tree_node] : voxel_map)
         {
+            oct_tree_node->MergePlane(merged_voxel_color_cloud_);
+            oct_tree_node->FitPlane(fit_svd_plane_config_, fit_plane_config_,
+                fitted_svd_color_cloud_, fitted_color_cloud_);
+            continue;
             std::vector<Plane*> plane_list;
             std::vector<Plane*> merge_plane_list;
             oct_tree_node->get_plane_list(plane_list);
@@ -854,106 +1146,6 @@ public:
         }
     }
 
-    void mergePlane(std::vector<Plane*>& origin_list, std::vector<Plane*>& merge_list)
-    {
-        for (size_t i = 0; i < origin_list.size(); i++)
-            origin_list[i]->id = 0;
-
-        int current_id = 1;
-        for (auto iter = origin_list.end() - 1; iter != origin_list.begin(); iter--)
-        {
-            for (auto iter2 = origin_list.begin(); iter2 != iter; iter2++)
-            {
-                Eigen::Vector3d normal_diff = (*iter)->normal - (*iter2)->normal;
-                Eigen::Vector3d normal_add = (*iter)->normal + (*iter2)->normal;
-                double dis1 = fabs((*iter)->normal(0) * (*iter2)->center(0) +
-                              (*iter)->normal(1) * (*iter2)->center(1) +
-                              (*iter)->normal(2) * (*iter2)->center(2) + (*iter)->d);
-                double dis2 = fabs((*iter2)->normal(0) * (*iter)->center(0) +
-                              (*iter2)->normal(1) * (*iter)->center(1) +
-                              (*iter2)->normal(2) * (*iter)->center(2) + (*iter2)->d);
-                if (normal_diff.norm() < 0.2 || normal_add.norm() < 0.2)
-                    if (dis1 < 0.05 && dis2 < 0.05)
-                    {
-                        if ((*iter)->id == 0 && (*iter2)->id == 0)
-                        {
-                            (*iter)->id = current_id;
-                            (*iter2)->id = current_id;
-                            current_id++;
-                        }
-                        else if ((*iter)->id == 0 && (*iter2)->id != 0)
-                            (*iter)->id = (*iter2)->id;
-                        else if ((*iter)->id != 0 && (*iter2)->id == 0)
-                            (*iter2)->id = (*iter)->id;
-                    }
-            }
-        }
-        std::vector<int> merge_flag;
-        for (size_t i = 0; i < origin_list.size(); i++)
-        {
-            auto it = std::find(merge_flag.begin(), merge_flag.end(), origin_list[i]->id);
-            if (it != merge_flag.end()) continue;
-            
-            if (origin_list[i]->id == 0)
-            {
-                merge_list.push_back(origin_list[i]);
-                continue;
-            }
-            Plane* merge_plane = new Plane;
-            (*merge_plane) = (*origin_list[i]);
-            for (size_t j = 0; j < origin_list.size(); j++)
-            {
-                if (i == j) continue;
-                if (origin_list[i]->id != 0)
-                    if (origin_list[j]->id == origin_list[i]->id)
-                        for (auto pv : origin_list[j]->plane_points)
-                            merge_plane->plane_points.push_back(pv);
-            }
-            merge_plane->covariance = Eigen::Matrix3d::Zero();
-            merge_plane->center = Eigen::Vector3d::Zero();
-            merge_plane->normal = Eigen::Vector3d::Zero();
-            merge_plane->points_size = merge_plane->plane_points.size();
-            merge_plane->radius = 0;
-            for (auto pv : merge_plane->plane_points)
-            {
-                merge_plane->covariance += pv * pv.transpose();
-                merge_plane->center += pv;
-            }
-            merge_plane->center = merge_plane->center / merge_plane->points_size;
-            merge_plane->covariance = merge_plane->covariance / merge_plane->points_size -
-                merge_plane->center * merge_plane->center.transpose();
-            Eigen::EigenSolver<Eigen::Matrix3d> es(merge_plane->covariance);
-            Eigen::Matrix3cd evecs = es.eigenvectors();
-            Eigen::Vector3cd evals = es.eigenvalues();
-            Eigen::Vector3d evalsReal;
-            evalsReal = evals.real();
-            Eigen::Matrix3f::Index evalsMin, evalsMax;
-            evalsReal.rowwise().sum().minCoeff(&evalsMin);
-            evalsReal.rowwise().sum().maxCoeff(&evalsMax);
-            int evalsMid = 3 - evalsMin - evalsMax;
-            Eigen::Vector3d evecMin = evecs.real().col(evalsMin);
-            Eigen::Vector3d evecMid = evecs.real().col(evalsMid);
-            Eigen::Vector3d evecMax = evecs.real().col(evalsMax);
-            merge_plane->id = origin_list[i]->id;
-            merge_plane->normal << evecs.real()(0, evalsMin),
-                evecs.real()(1, evalsMin), evecs.real()(2, evalsMin);
-            merge_plane->min_eigen_value = evalsReal(evalsMin);
-            merge_plane->radius = sqrt(evalsReal(evalsMax));
-            merge_plane->d = -(merge_plane->normal(0) * merge_plane->center(0) +
-                             merge_plane->normal(1) * merge_plane->center(1) +
-                             merge_plane->normal(2) * merge_plane->center(2));
-            merge_plane->p_center.x = merge_plane->center(0);
-            merge_plane->p_center.y = merge_plane->center(1);
-            merge_plane->p_center.z = merge_plane->center(2);
-            merge_plane->p_center.normal_x = merge_plane->normal(0);
-            merge_plane->p_center.normal_y = merge_plane->normal(1);
-            merge_plane->p_center.normal_z = merge_plane->normal(2);
-            merge_plane->is_plane = true;
-            merge_flag.push_back(merge_plane->id);
-            merge_list.push_back(merge_plane);
-        }
-    }
-
     void initVoxel(const float voxel_size, std::unordered_map<VOXEL_LOC, Voxel*>& voxel_map)
     {
         ROS_INFO_STREAM("Building Voxel");
@@ -1034,7 +1226,7 @@ public:
         {
             if (iter->second->cloud->size() > 50)
             {
-                std::vector<SinglePlane> plane_lists;
+                std::vector<SinglePlane<>> plane_lists;
                 // 创建一个体素滤波器
                 pcl::PointCloud<pcl::PointXYZI>::Ptr cloud_filter(new pcl::PointCloud<pcl::PointXYZI>);
                 pcl::copyPointCloud(*iter->second->cloud, *cloud_filter);
@@ -1096,7 +1288,7 @@ public:
                         p_center.x = p_center.x / planner_cloud.size();
                         p_center.y = p_center.y / planner_cloud.size();
                         p_center.z = p_center.z / planner_cloud.size();
-                        SinglePlane single_plane;
+                        SinglePlane<> single_plane;
                         single_plane.cloud = planner_cloud;
                         single_plane.p_center = p_center;
                         single_plane.normal << coefficients->values[0],
@@ -1340,7 +1532,7 @@ public:
         }
     }
 
-    void calcLine(const std::vector<SinglePlane>& plane_lists, const double voxel_size,
+    void calcLine(const std::vector<SinglePlane<>>& plane_lists, const double voxel_size,
                   const Eigen::Vector3d origin,
                   std::vector<pcl::PointCloud<pcl::PointXYZI>>& edge_cloud_lists)
     {
