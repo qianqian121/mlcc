@@ -21,9 +21,9 @@ Adaptive.down_sample_voxel_size: 0.05
 Adaptive.edge_distance_threshold: 0.009
 
 Svd.eps_angle: 0.1
-Svd.ransac_dis_threshold: 0.02
+Svd.ransac_dis_threshold: 0.002
 Svd.plane_size_threshold: 20
-Voxel.eps_angle: 0.02
+Voxel.eps_angle: 0.05
 Voxel.ransac_dis_threshold: 0.005
 Voxel.plane_size_threshold: 40
 
