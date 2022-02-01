@@ -10,7 +10,7 @@
     <!-- distance threshold lower bound:
     if AVIA is set as the base LiDAR: 12 in scene-2, 8 in scene-1,
     if MID is set as the base LiDAR: 8 in scene-2, 0 in scene-1 -->
-    <param name="dis_thr_low_bound" type="int" value="20"/>
+    <param name="dis_thr_low_bound" type="int" value="17"/>
 
     <!-- if using adaptive voxel -->
     <param name="use_ada_voxel" type="bool" value="true"/>
