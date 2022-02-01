@@ -198,8 +198,12 @@ int main(int argc, char **argv)
 
     int dis_thr_low_bound;
     bool use_ada_voxel;
+    bool use_schur_jacobi{false};
+    bool minimizer_progress_to_stdout{false};
     nh.getParam("dis_thr_low_bound", dis_thr_low_bound);
     nh.getParam("use_ada_voxel", use_ada_voxel);
+    nh.getParam("use_schur_jacobi", use_schur_jacobi);
+    nh.getParam("minimizer_progress_to_stdout", minimizer_progress_to_stdout);
 
     const string CamCfgPath = string(argv[1]);
     const string CalibSettingPath = string(argv[2]);
@@ -269,9 +273,14 @@ int main(int argc, char **argv)
                     problem.AddResidualBlock(cost_function, NULL, ext, ext + 4);
                 }
                 ceres::Solver::Options options;
-                options.preconditioner_type = ceres::JACOBI;
-                options.linear_solver_type = ceres::SPARSE_SCHUR;
-                options.minimizer_progress_to_stdout = false;
+                if (use_schur_jacobi) {
+                  options.preconditioner_type = ceres::SCHUR_JACOBI;
+                  options.linear_solver_type = ceres::ITERATIVE_SCHUR;
+                } else {
+                  options.preconditioner_type = ceres::JACOBI;
+                  options.linear_solver_type = ceres::SPARSE_SCHUR;
+                }
+                options.minimizer_progress_to_stdout = minimizer_progress_to_stdout;
                 options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
 
                 ceres::Solver::Summary summary;
