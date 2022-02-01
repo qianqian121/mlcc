@@ -2036,7 +2036,7 @@ public:
                 Eigen::Vector3d pt2(0, 0, 1);
                 Eigen::Vector3d pt;
                 pt = base_poses[a].q.inverse() * (pt1 - base_poses[a].t);
-                if (cos_angle(q_ * pt + t_, pt2) > 0.8) // FoV check
+//                if (cos_angle(q_ * pt + t_, pt2) > 0.8) // FoV check
                     pts_3d.emplace_back(cv::Point3f(pt(0), pt(1), pt(2)));
             }
             cv::projectPoints(pts_3d, r_vec, t_vec, camera_matrix, distortion_coeff, pts_2d);
