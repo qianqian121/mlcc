@@ -212,6 +212,17 @@ int main(int argc, char **argv)
     Calibration calib(bag_path, CamCfgPaths, CalibSettingPath, use_ada_voxel);
 //     roughCalib(calib, DEG2RAD(0.1), 30);
 
+    // show edge pnp
+    int a = 0;
+    Eigen::Vector3d euler_angle = calib.cams[a].ext_R.eulerAngles(2, 1, 0); // 2 is z, 0 is x
+    Eigen::Vector3d transation = calib.cams[a].ext_t;
+    Vector6d calib_params;
+    calib_params << euler_angle(0), euler_angle(1), euler_angle(2),
+        transation(0), transation(1), transation(2);
+    vector<VPnPData> vpnp_list;
+    calib.buildVPnp(calib.cams[a], calib_params, 20, true,
+                    calib.cams[a].rgb_edge_clouds, calib.lidar_edge_clouds, vpnp_list);
+
     /* calibration process */
     int iter = 0;
     ros::Time begin_t = ros::Time::now();
