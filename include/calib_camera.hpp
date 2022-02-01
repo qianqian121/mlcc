@@ -250,6 +250,163 @@ void mergePlane(std::vector<Plane*>& origin_list, std::vector<Plane*>& merge_lis
 }
 
 template<typename T = pcl::PointXYZ>
+std::vector<Eigen::Vector3d> CalcLine(const SinglePlane<T>& plane1, const SinglePlane<T>& plane2,
+                                      const Eigen::Vector3d origin, const double voxel_size,
+                                      double theta_min, double theta_max,
+                                      double min_line_dis_threshold, double max_line_dis_threshold) {
+  std::vector<Eigen::Vector3d> line_point;
+  float a1 = plane1.normal[0];
+  float b1 = plane1.normal[1];
+  float c1 = plane1.normal[2];
+  float x1 = plane1.p_center.x;
+  float y1 = plane1.p_center.y;
+  float z1 = plane1.p_center.z;
+  float a2 = plane2.normal[0];
+  float b2 = plane2.normal[1];
+  float c2 = plane2.normal[2];
+  float x2 = plane2.p_center.x;
+  float y2 = plane2.p_center.y;
+  float z2 = plane2.p_center.z;
+  float theta = a1 * a2 + b1 * b2 + c1 * c2;
+  float point_dis_threshold = 0.00;
+  std::cout << "theta: " << theta << std::endl;
+  if (theta >= theta_max && theta <= theta_min)
+  {
+    if (plane1.cloud.size() > 0 ||
+        plane2.cloud.size() > 0)
+    {
+      float matrix[4][5];
+      matrix[1][1] = a1; matrix[1][2] = b1; matrix[1][3] = c1;
+      matrix[1][4] = a1 * x1 + b1 * y1 + c1 * z1;
+      matrix[2][1] = a2; matrix[2][2] = b2; matrix[2][3] = c2;
+      matrix[2][4] = a2 * x2 + b2 * y2 + c2 * z2;
+
+      std::vector<Eigen::Vector3d> points;
+      Eigen::Vector3d point;
+      matrix[3][1] = 1; matrix[3][2] = 0; matrix[3][3] = 0;
+      matrix[3][4] = origin[0];
+      calc<float>(matrix, point);
+      if (point[0] >= origin[0] - point_dis_threshold &&
+          point[0] <= origin[0] + voxel_size + point_dis_threshold &&
+          point[1] >= origin[1] - point_dis_threshold &&
+          point[1] <= origin[1] + voxel_size + point_dis_threshold &&
+          point[2] >= origin[2] - point_dis_threshold &&
+          point[2] <= origin[2] + voxel_size + point_dis_threshold)
+        points.push_back(point);
+
+      matrix[3][1] = 0; matrix[3][2] = 1; matrix[3][3] = 0;
+      matrix[3][4] = origin[1];
+      calc<float>(matrix, point);
+      if (point[0] >= origin[0] - point_dis_threshold &&
+          point[0] <= origin[0] + voxel_size + point_dis_threshold &&
+          point[1] >= origin[1] - point_dis_threshold &&
+          point[1] <= origin[1] + voxel_size + point_dis_threshold &&
+          point[2] >= origin[2] - point_dis_threshold &&
+          point[2] <= origin[2] + voxel_size + point_dis_threshold)
+        points.push_back(point);
+
+      matrix[3][1] = 0; matrix[3][2] = 0; matrix[3][3] = 1;
+      matrix[3][4] = origin[2];
+      calc<float>(matrix, point);
+      if (point[0] >= origin[0] - point_dis_threshold &&
+          point[0] <= origin[0] + voxel_size + point_dis_threshold &&
+          point[1] >= origin[1] - point_dis_threshold &&
+          point[1] <= origin[1] + voxel_size + point_dis_threshold &&
+          point[2] >= origin[2] - point_dis_threshold &&
+          point[2] <= origin[2] + voxel_size + point_dis_threshold)
+        points.push_back(point);
+
+      matrix[3][1] = 1; matrix[3][2] = 0; matrix[3][3] = 0;
+      matrix[3][4] = origin[0] + voxel_size;
+      calc<float>(matrix, point);
+      if (point[0] >= origin[0] - point_dis_threshold &&
+          point[0] <= origin[0] + voxel_size + point_dis_threshold &&
+          point[1] >= origin[1] - point_dis_threshold &&
+          point[1] <= origin[1] + voxel_size + point_dis_threshold &&
+          point[2] >= origin[2] - point_dis_threshold &&
+          point[2] <= origin[2] + voxel_size + point_dis_threshold)
+        points.push_back(point);
+
+      matrix[3][1] = 0; matrix[3][2] = 1; matrix[3][3] = 0;
+      matrix[3][4] = origin[1] + voxel_size;
+      calc<float>(matrix, point);
+      if (point[0] >= origin[0] - point_dis_threshold &&
+          point[0] <= origin[0] + voxel_size + point_dis_threshold &&
+          point[1] >= origin[1] - point_dis_threshold &&
+          point[1] <= origin[1] + voxel_size + point_dis_threshold &&
+          point[2] >= origin[2] - point_dis_threshold &&
+          point[2] <= origin[2] + voxel_size + point_dis_threshold)
+        points.push_back(point);
+
+      matrix[3][1] = 0; matrix[3][2] = 0; matrix[3][3] = 1;
+      matrix[3][4] = origin[2] + voxel_size;
+      calc<float>(matrix, point);
+      if (point[0] >= origin[0] - point_dis_threshold &&
+          point[0] <= origin[0] + voxel_size + point_dis_threshold &&
+          point[1] >= origin[1] - point_dis_threshold &&
+          point[1] <= origin[1] + voxel_size + point_dis_threshold &&
+          point[2] >= origin[2] - point_dis_threshold &&
+          point[2] <= origin[2] + voxel_size + point_dis_threshold)
+        points.push_back(point);
+
+      std::cout << "calc line points.size(): " << points.size() << std::endl;
+      if (points.size() == 2)
+      {
+        pcl::PointXYZ p1(points[0][0], points[0][1], points[0][2]);
+        pcl::PointXYZ p2(points[1][0], points[1][1], points[1][2]);
+        float length = sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) +
+                            pow(p1.z - p2.z, 2));
+        // 指定近邻个数
+        int K = 1;
+        // 创建两个向量，分别存放近邻的索引值、近邻的中心距
+        std::vector<int> pointIdxNKNSearch1(K);
+        std::vector<float> pointNKNSquaredDistance1(K);
+        std::vector<int> pointIdxNKNSearch2(K);
+        std::vector<float> pointNKNSquaredDistance2(K);
+        typename pcl::search::KdTree<T>::Ptr kdtree1(
+            new pcl::search::KdTree<T>());
+        typename pcl::search::KdTree<T>::Ptr kdtree2(
+            new pcl::search::KdTree<T>());
+        kdtree1->setInputCloud(plane1.cloud.makeShared());
+        kdtree2->setInputCloud(plane2.cloud.makeShared());
+        for (float inc = 0; inc <= length; inc += 0.01)
+        {
+          pcl::PointXYZ p;
+          p.x = p1.x + (p2.x - p1.x) * inc / length;
+          p.y = p1.y + (p2.y - p1.y) * inc / length;
+          p.z = p1.z + (p2.z - p1.z) * inc / length;
+          if ((kdtree1->nearestKSearch(p, K, pointIdxNKNSearch1,
+                                       pointNKNSquaredDistance1) > 0) &&
+              (kdtree2->nearestKSearch(p, K, pointIdxNKNSearch2,
+                                       pointNKNSquaredDistance2) > 0))
+          {
+            float dis1 = pow(p.x - plane1
+                .cloud.points[pointIdxNKNSearch1[0]].x, 2) +
+                         pow(p.y - plane1
+                             .cloud.points[pointIdxNKNSearch1[0]].y, 2) +
+                         pow(p.z - plane1
+                             .cloud.points[pointIdxNKNSearch1[0]].z, 2);
+            float dis2 = pow(p.x - plane2
+                .cloud.points[pointIdxNKNSearch2[0]].x, 2) +
+                         pow(p.y - plane2
+                             .cloud.points[pointIdxNKNSearch2[0]].y, 2) +
+                         pow(p.z - plane2
+                             .cloud.points[pointIdxNKNSearch2[0]].z, 2);
+            if ((dis1 < min_line_dis_threshold * min_line_dis_threshold &&
+                 dis2 < max_line_dis_threshold * max_line_dis_threshold) ||
+                ((dis1 < max_line_dis_threshold * max_line_dis_threshold &&
+                  dis2 < min_line_dis_threshold * min_line_dis_threshold)))
+              line_point.emplace_back(p.x, p.y, p.z);
+          }
+        }
+        std::cout << "line_point.size(): " << line_point.size() << std::endl;
+      }
+    }
+  }
+  return line_point;
+}
+
+template<typename T = pcl::PointXYZ>
 std::vector<Eigen::Vector3d> projectLine(const SinglePlane<T>& plane1, const SinglePlane<T>& plane2,
     double theta_min, double theta_max)
 {
@@ -595,7 +752,7 @@ public:
       }
     }
 
-    void ExtractEdge(const pcl::PointCloud<pcl::PointXYZI>::Ptr& lidar_edge_cloud,
+    void ExtractEdgeSvd(const pcl::PointCloud<pcl::PointXYZI>::Ptr& lidar_edge_cloud,
         double theta_min, double theta_max, double dist_threshold) {
       if (fitted_planes_.empty()) return;
 
@@ -625,6 +782,36 @@ public:
                 lidar_edge_cloud->points.back().z = p.z;
               }
             }
+          }
+        }
+      }
+    }
+
+    void ExtractEdge(const pcl::PointCloud<pcl::PointXYZI>::Ptr& lidar_edge_cloud,
+                     double voxel_size,
+                     double theta_min, double theta_max,
+                     double min_line_dis_threshold, double max_line_dis_threshold,
+                     int edge_points_threshold) {
+      if (fitted_planes_.empty()) return;
+
+      const double half_voxel_size = 0.5 * voxel_size;
+      Eigen::Vector3d origin(voxel_center_[0] - half_voxel_size,
+          voxel_center_[1] - half_voxel_size,
+          voxel_center_[2] - half_voxel_size);
+      for (int p1_index = 0; p1_index < fitted_planes_.size() - 1; p1_index++) {
+        for (int p2_index = p1_index + 1; p2_index < fitted_planes_.size(); p2_index++) {
+          const auto &line_point = CalcLine(fitted_planes_[p1_index], fitted_planes_[p2_index],
+              origin, voxel_size,
+              theta_min, theta_max, min_line_dis_threshold, max_line_dis_threshold);
+           std::cout << "line size:" << line_point.size() << std::endl;
+          if (line_point.size() < edge_points_threshold) break;
+
+          for (const auto & pt : line_point) {
+            line_cloud_.points.emplace_back(pt[0], pt[1], pt[2]);
+            lidar_edge_cloud->points.emplace_back();
+            lidar_edge_cloud->points.back().x = pt[0];
+            lidar_edge_cloud->points.back().y = pt[1];
+            lidar_edge_cloud->points.back().z = pt[2];
           }
         }
       }
@@ -711,6 +898,7 @@ public:
     float line_dis_threshold_;
     float min_line_dis_threshold_;
     float max_line_dis_threshold_;
+    int min_line_points_size_{30};
 
     int edge_number_ = 0;
     int plane_max_size_ = 5;
@@ -954,6 +1142,7 @@ public:
         ransac_dis_threshold_ = fSettings["Ransac.dis_threshold"];
         min_line_dis_threshold_ = fSettings["Edge.min_dis_threshold"];
         max_line_dis_threshold_ = fSettings["Edge.max_dis_threshold"];
+        min_line_points_size_ = fSettings["Edge.min_points_size"];
         theta_min_ = fSettings["Plane.normal_theta_min"];
         theta_max_ = fSettings["Plane.normal_theta_max"];
         theta_min_ = cos(DEG2RAD(theta_min_));
@@ -1193,7 +1382,9 @@ public:
             oct_tree_node->MergePlane(merged_voxel_color_cloud_);
             oct_tree_node->FitPlane(fit_svd_plane_config_, fit_plane_config_,
                 fitted_svd_color_cloud_, fitted_color_cloud_);
-            oct_tree_node->ExtractEdge(lidar_edge_clouds, theta_min_, theta_max_, adaptive_edge_distance_threshold_);
+            oct_tree_node->ExtractEdge(lidar_edge_clouds, adaptive_voxel_size_,
+                theta_min_, theta_max_,
+                min_line_dis_threshold_, max_line_dis_threshold_, min_line_points_size_);
         }
     }
 
