@@ -14,6 +14,8 @@ LiDARFilesPath: "/mnt/project/ros/mlcc/catkin_ws/src/mlcc/config/"
 ExtrinsicNumber: 0 # total number of extrinsics to be calibrated
 LidarScanNumber: 1
 
+Projection.max_depth: 20.0
+
 Adaptive.voxel_size: 3.5
 Adaptive.points_size_threshold: 16
 Adaptive.eigen_threshold: 0.0002

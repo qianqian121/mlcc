@@ -887,6 +887,8 @@ public:
     std::string lidar_topic_name_ = "";
     std::string image_topic_name_ = "";
 
+    float max_depth_{150.0};
+
     float voxel_size_;
     float down_sample_size_;
     float ransac_dis_threshold_;
@@ -1133,6 +1135,8 @@ public:
 
         ROS_INFO_STREAM("read " << base_poses.size() << " poses, "
                                 << extrinsics.size() << " extrinsics");
+
+        max_depth_ = fSettings["Projection.max_depth"];
 
         rgb_canny_threshold_ = fSettings["Canny.gray_threshold"];
         rgb_edge_minLen_ = fSettings["Canny.len_threshold"];
@@ -2394,8 +2398,8 @@ public:
             {
                 // test depth and intensity both
                 float depth = sqrt(pow(pts_3d[i].x, 2) + pow(pts_3d[i].y, 2) + pow(pts_3d[i].z, 2));
-                if (depth >= 40) depth = 40;
-                float grey = depth / 40 * 65535;
+                if (depth >= max_depth_) depth = max_depth_;
+                float grey = depth / max_depth_ * 65535;
                 image_project.at<ushort>(point_2d.y, point_2d.x) = grey;
             }
         }
