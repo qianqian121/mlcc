@@ -904,6 +904,7 @@ public:
     int plane_max_size_ = 5;
     int rgb_canny_threshold_ = 20;
     int rgb_edge_minLen_ = 100;
+    int lidar_scan_num_{1000};
 
     double adaptive_voxel_size_ = 3.0;
     int adaptive_points_size_threshold_ = 20;
@@ -1148,6 +1149,7 @@ public:
         theta_min_ = cos(DEG2RAD(theta_min_));
         theta_max_ = cos(DEG2RAD(theta_max_));
 
+        lidar_scan_num_ = fSettings["LidarScanNumber"];
         adaptive_voxel_size_ = fSettings["Adaptive.voxel_size"];
         adaptive_points_size_threshold_ = fSettings["Adaptive.points_size_threshold"];
         eigen_threshold_ = fSettings["Adaptive.eigen_threshold"];
@@ -1206,7 +1208,7 @@ public:
         }
         ++cloudCount;
         // maxinum msg num 1000
-         if (cloudCount >= 1) {
+         if (cloudCount >= lidar_scan_num_) {
            break;
          }
       }
